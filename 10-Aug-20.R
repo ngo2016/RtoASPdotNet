@@ -8,148 +8,110 @@ library(prophet)
 library(geofacet)
 library(ggplot2)
 
-viewRD %>% 
-  ggplot(aes(x = NAM, y = TY_LE_CHI_PHI_RD, color = "red"))+
-  geom_line()+
-  facet_wrap(~TEN_DU_AN_TIENG_VIET, scales = "free", ncol = 4)+
-  theme(legend.position = "none")+
-  ggthemes::theme_economist()
-
-viewRD %>% class() 
-
-Encoding(viewRD$TEN_DU_AN_TIENG_VIET) <- "unicode"
-
-modelData <- viewRD %>%
-  select(TEN_DU_AN_TIENG_VIET, NAM, TY_LE_CHI_PHI_RD) %>%
-  mutate(month = "01", 
-         year = as.character(NAM), 
-         ds = paste(NAM, "01", "01", sep = "-") %>% as.Date()) %>%
-  select(TEN_DU_AN_TIENG_VIET, ds, TY_LE_CHI_PHI_RD)
-
-key <- modelData %>%
-  select(TEN_DU_AN_TIENG_VIET)%>%
-  distinct()%>%
-  mutate(name = c("Nidec Servo", "Nidec Sankyo", "Gen", "Datalogic", 
-                  "T.C", "MedicRD", "ElectricStuff", "IntellProduct", 
-                  "Sonion", "LED", "Samsung", "Healthcare", "Automatic", 
-                  "Platel", "Jabil", "ElectricProduct"))
-
-modelData %>%
-  ggplot(aes(x = ds, y = TY_LE_CHI_PHI_RD, color = TEN_DU_AN_TIENG_VIET))+
-  geom_smooth()+
-  geom_point()+
-  facet_wrap(~TEN_DU_AN_TIENG_VIET, scales = "free")+
-  theme(legend.position = "none")
-
-modelResult <- data.frame()
-
-for (i in 1:16) {
-  model <- modelData %>%
-    filter(TEN_DU_AN_TIENG_VIET == key$TEN_DU_AN_TIENG_VIET[i]) %>%
-    select(ds, y = TY_LE_CHI_PHI_RD) %>%
-    prophet()
-  
-  assign(paste(key$name[i], "model", sep = "_"), model)
-  
-  future <- make_future_dataframe(model, periods = 365)
-  
-  result <- predict(model, future) %>%
-    select(ds, yhat_lower, yhat_upper, yhat) %>%
-    mutate(TEN_DU_AN_TIENG_VIET = key$TEN_DU_AN_TIENG_VIET[i],
-           ds = as.Date(ds)) %>%
-    inner_join(modelData, by = c("TEN_DU_AN_TIENG_VIET" = "TEN_DU_AN_TIENG_VIET", "ds" = "ds"))
-  
-  modelResult <- rbind(modelResult, result)
-}
-
-modelResult %>%
-  ggplot(aes(x = ds, y = TY_LE_CHI_PHI_RD, color = TEN_DU_AN_TIENG_VIET))+
-  geom_line(color = "black")+
-  geom_line(aes(x = ds, y = yhat, color = TEN_DU_AN_TIENG_VIET))+
-  geom_ribbon(aes(ymin = yhat_lower, ymax = yhat_upper, fill = TEN_DU_AN_TIENG_VIET), alpha = .1)+
-  facet_wrap(~TEN_DU_AN_TIENG_VIET, scales = "free")+
-  theme(legend.position = "none")+
-  labs(title = "Du bao Ty le chi RD cua du an trong khu cnc")
-
-forecast <- viewRD %>%
-  select(TEN_DU_AN_TIENG_VIET, ds = NAM, y = TY_LE_CHI_PHI_RD)%>%
-  mutate(ds = paste(ds, "01", "01",sep = "-") %>% as.Date())%>%
-  group_by(TEN_DU_AN_TIENG_VIET)%>%
-  do(model = prophet(.),
-     future = make_future_dataframe(model, 1, freq = "year"),
-     result = predict(model, future))
-
-forecast %>%
-  unnest(result)%>%
-  select(TEN_DU_AN_TIENG_VIET, ds, yhat, yhat_upper, yhat_lower)%>%
-  mutate(ds = ds -2000)%>%
-  ggplot(aes(x = ds, y = yhat, color = TEN_DU_AN_TIENG_VIET))+
-  geom_ribbon(aes(ymax = yhat_upper, ymin = yhat_lower, fill = TEN_DU_AN_TIENG_VIET), alpha = .1)+
-  geom_line(color = "black")+
-  facet_wrap(~TEN_DU_AN_TIENG_VIET, scales = "free")+
-  theme(legend.position = "none")+
-  labs(title = "Du bao ty le chi RD")
-
-####################################################
 RD_data <- viewRD %>%
-  select(TEN_DU_AN_TIENG_VIET, ds = NAM, y = TY_LE_CHI_PHI_RD) %>%
+  select(TENDN_VT, ds = NAM, y = TY_LE_CHI_PHI_RD, KINH_PHI) %>%
   mutate(ds = paste(ds, "01", "01", sep = "-") %>% as.Date())
 
 model_func <- function(RD_name){
-  data <- RD_data %>% filter(TEN_DU_AN_TIENG_VIET == RD_name) %>% select(-TEN_DU_AN_TIENG_VIET)
+  data <- RD_data %>% 
+    filter(TENDN_VT == RD_name) %>% 
+    select(-TENDN_VT)
   
-  model <- prophet(data)
+  model <- prophet()
+  model <- add_regressor(model, 'KINH_PHI')
+  model <- fit.prophet(model, data)
   
-  future <- make_future_dataframe(model, 1, freq = "year")
+  future <- make_future_dataframe(model, 1, freq = "year") %>%
+    left_join((model$history %>%  select(ds, KINH_PHI)), by=c('ds'='ds'))
   
-  results <- predict(model, future) %>% select(ds, yhat, yhat_upper, yhat_lower)
+  future <- replace_na(future, list(KINH_PHI = RD_data$KINH_PHI[RD_data$TENDN_VT == RD_name][1]))
+  
+  results <- predict(model, future) %>% 
+    select(ds, yhat, yhat_upper, yhat_lower)
   
   return(results)
 }
 
-RD_list <- RD_data %>% select(TEN_DU_AN_TIENG_VIET) %>% distinct()
+RD_list <- RD_data %>% select(TENDN_VT) %>% distinct()
+
 results <- RD_list %>%
-  mutate(results = map(TEN_DU_AN_TIENG_VIET, model_func))
+  mutate(results = map(TENDN_VT, model_func))
 
 results %>%
   unnest() %>%
-  select(TEN_DU_AN_TIENG_VIET, ds, yhat, yhat_upper, yhat_lower) %>%
+  select(TENDN_VT, ds, yhat, yhat_upper, yhat_lower) %>%
   mutate(ds = ds -2000) %>%
-  ggplot(aes(x = ds, y = yhat, color = TEN_DU_AN_TIENG_VIET)) +
-  geom_ribbon(aes(ymax = yhat_upper, ymin = yhat_lower, fill = TEN_DU_AN_TIENG_VIET), alpha = .1) +
+  ggplot(aes(x = ds, y = yhat, color = TENDN_VT)) +
+  geom_ribbon(aes(ymax = yhat_upper, ymin = yhat_lower, fill = TENDN_VT), alpha = .1) +
   geom_line(color = "black") +
-  facet_wrap(~TEN_DU_AN_TIENG_VIET, scales = "free") +
+  facet_wrap(~TENDN_VT, scales = "free") +
   theme(legend.position = "none") +
   labs(title = "Du bao ty le chi RD", x = "Nam", y = "%")
 
 ####################################################
 RD_DH_data <- viewRD %>%
-  select(TEN_DU_AN_TIENG_VIET, ds = NAM, y = TY_LE_DH_TREN_DH_THAM_GIA_RD) %>%
+  select(TENDN_VT, ds = NAM, y = TY_LE_DH_TREN_DH_THAM_GIA_RD, KINH_PHI) %>%
   mutate(ds = paste(ds, "01", "01", sep = "-") %>% as.Date())
 
 model_DH_func <- function(RD_name){
-  data <- RD_DH_data %>% filter(TEN_DU_AN_TIENG_VIET == RD_name) %>% select(-TEN_DU_AN_TIENG_VIET)
+  data <- RD_data %>% 
+    filter(TENDN_VT == RD_name) %>% 
+    select(-TENDN_VT)
   
-  model <- prophet(data)
+  model <- prophet()
+  model <- add_regressor(model, 'KINH_PHI')
+  model <- fit.prophet(model, data)
   
-  future <- make_future_dataframe(model, 1, freq = "year")
+  future <- make_future_dataframe(model, 1, freq = "year")%>%
+    left_join((model$history %>%  select(ds, KINH_PHI)), by=c('ds'='ds'))
+
+  future <- replace_na(future, list(KINH_PHI = RD_data$KINH_PHI[RD_data$TENDN_VT == RD_name][1]))
   
   results <- predict(model, future) %>% select(ds, yhat, yhat_upper, yhat_lower)
   
   return(results)
 }
 
-RD_DH_list <- RD_DH_data %>% select(TEN_DU_AN_TIENG_VIET) %>% distinct()
+RD_DH_list <- RD_DH_data %>% select(TENDN_VT) %>% distinct()
+
 DH_results <- RD_DH_list %>%
-  mutate(DH_results = map(TEN_DU_AN_TIENG_VIET, model_DH_func))
+  mutate(DH_results = map(TENDN_VT, model_DH_func))
 
 DH_results %>%
   unnest() %>%
-  select(TEN_DU_AN_TIENG_VIET, ds, yhat, yhat_upper, yhat_lower) %>%
+  select(TENDN_VT, ds, yhat, yhat_upper, yhat_lower) %>%
   mutate(ds = ds -2000) %>%
-  ggplot(aes(x = ds, y = yhat, color = TEN_DU_AN_TIENG_VIET)) +
-  geom_ribbon(aes(ymax = yhat_upper, ymin = yhat_lower, fill = TEN_DU_AN_TIENG_VIET), alpha = .1) +
+  ggplot(aes(x = ds, y = yhat, color = TENDN_VT)) +
+  geom_ribbon(aes(ymax = yhat_upper, ymin = yhat_lower, fill = TENDN_VT), alpha = .1) +
   geom_line(color = "black") +
-  facet_wrap(~TEN_DU_AN_TIENG_VIET, scales = "free") +
+  facet_wrap(~TENDN_VT, scales = "free") +
   theme(legend.position = "none") +
   labs(title = "Du bao ty le dh - tren dh tham gia RD", x = "Nam", y = "%")
+
+####################################################
+library(RODBC)
+cn <- odbcConnect("CNC", "truong", "z")
+xuat_khau <- sqlFetch(cn, "XUAT_KHAU_CNC")
+odbcClose(cn)
+
+library(tidyverse)
+library(prophet)
+library(geofacet)
+library(ggplot2)
+
+data_xuat_khau <- xuat_khau %>%
+  select(y = XUAT_KHAU, ds = NAM) %>%
+  mutate(ds = paste(ds, "01", "01", sep = "-") %>% as.Date())
+
+model_xuat_khau <- prophet(data_xuat_khau)
+
+future_xuat_khau <- make_future_dataframe(model_xuat_khau, 1, freq = "year")
+
+forecast_xuat_khau <- predict(model_xuat_khau, future_xuat_khau)
+
+forecast_xuat_khau %>%
+  select(ds, yhat, yhat_upper, yhat_lower) %>%
+  ggplot(aes(x = ds, y = yhat)) +
+  geom_ribbon(aes(ymax = yhat_upper, ymin = yhat_lower), alpha = .1) +
+  geom_line(color = "red") +
+  labs(title = "Du bao tinh hinh xuat khau khu cnc", x = "Nam", y = "Ngan ty USD")
