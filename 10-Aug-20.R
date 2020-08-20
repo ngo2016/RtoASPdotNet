@@ -62,11 +62,13 @@ model_DH_func <- function(RD_name){
   model <- add_regressor(model, 'KINH_PHI')
   model <- fit.prophet(model, data)
   
-  future <- make_future_dataframe(model, 1, freq = "year")%>%
-    left_join((model$history %>%  select(ds, KINH_PHI)), by=c('ds'='ds'))
-
-  future <- replace_na(future, list(KINH_PHI = RD_data$KINH_PHI[RD_data$TENDN_VT == RD_name][1]))
   
+  
+  future <- make_future_dataframe(model, 1, freq = "year") %>%
+    left_join((model$history %>% select(ds, KINH_PHI)), by=c('ds'='ds'))
+
+  future <- replace_na(future, list(KINH_PHI = mean(RD_data$KINH_PHI[RD_data$TENDN_VT == RD_name])))
+ 
   results <- predict(model, future) %>% select(ds, yhat, yhat_upper, yhat_lower)
   
   return(results)
